@@ -2,6 +2,7 @@ import streamlit as st
 import csv, json, re, time, urllib.parse as up, requests
 from pathlib import Path
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 
 # 設定ファイル読み込み
 CFG     = json.loads(Path("google_api_key.json").read_text())
@@ -21,6 +22,65 @@ def gsearch(q, start=1, num=10):
     params = {"key": API_KEY, "cx": CSE_ID, "q": q, "num": num, "start": start}
     return requests.get(url, params=params, timeout=30).json().get("items", [])
 
+def is_corporate_site(url):
+    """コーポレートサイトかどうかをチェック"""
+    try:
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 会社名の検出
+        text = soup.get_text()
+        if ORG_REGEX.search(text):
+            return True
+            
+        # コーポレートサイトによくある要素のチェック
+        corporate_elements = [
+            '会社概要', '企業情報', 'about', 'company', 'corporate',
+            '採用情報', 'recruit', 'career', 'お問い合わせ', 'contact'
+        ]
+        for element in corporate_elements:
+            if element in text.lower():
+                return True
+                
+        return False
+    except:
+        return False
+
+def has_recent_updates(url):
+    """直近1-2ヶ月以内に更新があるかチェック"""
+    try:
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # ブログ記事やニュースの日付を探す
+        date_patterns = [
+            r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?',
+            r'\d{1,2}[-/月]\d{1,2}日?',
+            r'\d{1,2}[-/月]\d{1,2}日?'
+        ]
+        
+        # 日付を含む可能性のある要素を探す
+        for element in soup.find_all(['time', 'span', 'div', 'p']):
+            text = element.get_text()
+            for pattern in date_patterns:
+                if re.search(pattern, text):
+                    # 日付を解析
+                    try:
+                        date_str = re.search(pattern, text).group()
+                        # 日付の正規化（例: 2023年12月31日 → 2023-12-31）
+                        date_str = re.sub(r'[年月]', '-', date_str)
+                        date_str = re.sub(r'日', '', date_str)
+                        date = datetime.strptime(date_str, '%Y-%m-%d')
+                        
+                        # 1-2ヶ月以内かチェック
+                        if date > datetime.now() - timedelta(days=60):
+                            return True
+                    except:
+                        continue
+        return False
+    except:
+        return False
+
 def collect(keyword, pref, max_hits):
     q = f"{keyword} site:blog OR inurl:blog"
     if pref:
@@ -35,9 +95,13 @@ def collect(keyword, pref, max_hits):
             dom = up.urlparse(url).netloc
             if any(r["domain"] == dom for r in results):
                 continue
-            results.append({"domain": dom, "page_url": url})
-            if len(results) >= max_hits:
-                break
+                
+            # コーポレートサイトかつ最近の更新がある場合のみ追加
+            if is_corporate_site(url) and has_recent_updates(url):
+                results.append({"domain": dom, "page_url": url})
+                if len(results) >= max_hits:
+                    break
+                    
         start += 10
         time.sleep(1)
     return results
@@ -45,6 +109,7 @@ def collect(keyword, pref, max_hits):
 # --- Streamlit UI ---
 st.title("ブログ収集SaaS")
 st.write("キーワード・都道府県・取得件数を入力して「実行」を押すと、CSVが生成されます。")
+st.write("※コーポレートサイトで、直近1-2ヶ月以内に更新のあるブログのみを取得します。")
 
 keyword  = st.text_input("キーワード", value="システム開発")
 pref     = st.text_input("都道府県", value="東京都")
