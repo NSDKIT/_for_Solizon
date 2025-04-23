@@ -47,27 +47,28 @@ def is_corporate_site(url):
         return False
 
 def has_recent_updates(url):
-    """直近1-2ヶ月以内に更新があるかチェック"""
+    """直近1-2ヶ月以内にブログが更新されているかチェック"""
     try:
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # ブログ記事やニュースの日付を探す
+        # ブログ記事の日付を探す
         date_patterns = [
-            r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?',
-            r'\d{1,2}[-/月]\d{1,2}日?',
-            r'\d{1,2}[-/月]\d{1,2}日?'
+            r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?',  # 2023年12月31日, 2023-12-31
+            r'\d{1,2}[-/月]\d{1,2}日?',             # 12月31日, 12-31
+            r'\d{4}/\d{1,2}/\d{1,2}',               # 2023/12/31
+            r'\d{4}年\d{1,2}月\d{1,2}日'            # 2023年12月31日
         ]
         
-        # 日付を含む可能性のある要素を探す
-        for element in soup.find_all(['time', 'span', 'div', 'p']):
+        # ブログ記事の日付を含む可能性のある要素を探す
+        for element in soup.find_all(['time', 'span', 'div', 'p', 'article']):
+            # ブログ記事の日付は通常、記事の上部や下部にある
             text = element.get_text()
             for pattern in date_patterns:
                 if re.search(pattern, text):
-                    # 日付を解析
                     try:
                         date_str = re.search(pattern, text).group()
-                        # 日付の正規化（例: 2023年12月31日 → 2023-12-31）
+                        # 日付の正規化
                         date_str = re.sub(r'[年月]', '-', date_str)
                         date_str = re.sub(r'日', '', date_str)
                         date = datetime.strptime(date_str, '%Y-%m-%d')
